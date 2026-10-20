@@ -1,6 +1,7 @@
 name: Nightly Universal APK
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
