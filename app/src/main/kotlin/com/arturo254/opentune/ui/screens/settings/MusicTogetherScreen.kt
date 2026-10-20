@@ -10,6 +10,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
@@ -98,6 +99,7 @@ import com.arturo254.opentune.constants.TogetherDisplayNameKey
 import com.arturo254.opentune.constants.TogetherLastJoinLinkKey
 import com.arturo254.opentune.constants.TogetherRequireHostApprovalToJoinKey
 import com.arturo254.opentune.constants.TogetherWelcomeShownKey
+import com.arturo254.opentune.together.TogetherDiscoveredSession
 import com.arturo254.opentune.together.TogetherLink
 import com.arturo254.opentune.together.TogetherRole
 import com.arturo254.opentune.together.TogetherRoomSettings
@@ -106,6 +108,9 @@ import com.arturo254.opentune.ui.component.IconButton as AtIconButton
 import com.arturo254.opentune.ui.component.TextFieldDialog
 import com.arturo254.opentune.ui.utils.backToMain
 import com.arturo254.opentune.utils.rememberPreference
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.flow.flowOf
 
 @SuppressLint("LocalContextGetResourceValueCall")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -212,6 +217,76 @@ fun MusicTogetherScreen(
     }
     val setRequireApproval: (Boolean) -> Unit = { v ->
         setRequireApprovalRaw(v); pushSettingsToActiveSession(approval = v)
+    }
+
+    // ── QR invites & contacts ────────────────────────────────────────────────
+
+    val service = playerConnection?.service
+    val guestCard by remember(service) { service?.togetherGuestCard ?: MutableStateFlow<com.arturo254.opentune.together.TogetherGuestCard?>(null) }.collectAsState()
+    val incomingInvite by remember(service) { service?.togetherIncomingInvite ?: MutableStateFlow<com.arturo254.opentune.together.TogetherInvite?>(null) }.collectAsState()
+    val contacts by remember(service) {
+        service?.togetherContactsStore?.contacts ?: flowOf(emptyList())
+    }.collectAsState(initial = emptyList())
+    // Not saveable: the listener does not survive process death, so neither should the dialog.
+    var showGuestQr by remember { mutableStateOf(false) }
+
+    // Discover contacts' sessions only while idle and there is someone to look for.
+    val isIdle = sessionState is TogetherSessionState.Idle || sessionState is TogetherSessionState.Error
+    val discoveryActive = isIdle && contacts.isNotEmpty()
+    val liveContactSessions by remember(service, discoveryActive) {
+        if (discoveryActive && service != null) service.discoverTogetherContactSessions()
+        else flowOf(emptyList<TogetherDiscoveredSession>())
+    }.collectAsState(initial = emptyList())
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents?.trim().orEmpty()
+        if (contents.isNotBlank()) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            service?.inviteTogetherGuest(contents)
+        }
+    }
+    val scanPrompt = stringResource(R.string.together_scan_prompt)
+    val launchGuestScan: () -> Unit = {
+        scanLauncher.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt(scanPrompt)
+                .setBeepEnabled(false)
+                .setOrientationLocked(false),
+        )
+    }
+
+    // Leaving the screen or getting into a session closes the guest listener.
+    LaunchedEffect(showGuestQr, disableJoinUi, isJoining) {
+        if (showGuestQr && (disableJoinUi || isJoining)) showGuestQr = false
+    }
+    androidx.compose.runtime.DisposableEffect(service) {
+        onDispose { service?.stopTogetherInviteListener() }
+    }
+
+    val invite = incomingInvite
+    if (invite != null) {
+        IncomingInviteDialog(
+            invite = invite,
+            onAccept = {
+                showGuestQr = false
+                service?.acceptTogetherInvite(displayName)
+            },
+            onDecline = {
+                // The token was burned by the invite, so the old QR is no longer usable.
+                showGuestQr = false
+                service?.declineTogetherInvite()
+                service?.stopTogetherInviteListener()
+            },
+        )
+    } else if (showGuestQr) {
+        GuestQrDialog(
+            card = guestCard,
+            onDismiss = {
+                showGuestQr = false
+                service?.stopTogetherInviteListener()
+            },
+        )
     }
 
     // ── Dialogs ──────────────────────────────────────────────────────────────
@@ -379,6 +454,20 @@ fun MusicTogetherScreen(
             )
         }
 
+        // Host: invite a guest by scanning their QR
+        if (hostingLan?.roomState != null && isHostRole) {
+            QrActionButton(
+                iconRes = R.drawable.qr_code_scanner,
+                title = stringResource(R.string.together_scan_guest_qr),
+                subtitle = stringResource(R.string.together_scan_prompt),
+                enabled = true,
+                onClick = launchGuestScan,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 12.dp),
+            )
+        }
+
         // Host section (LAN only)
         if (!isJoinedAsGuest) {
             HostSectionCard(
@@ -441,8 +530,39 @@ fun MusicTogetherScreen(
             },
             modifier = Modifier
                 .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp),
+                .padding(bottom = 12.dp),
         )
+
+        // Guest: show a QR so the host can invite this device
+        if (!disableJoinUi && !isJoining && !isHosting) {
+            QrActionButton(
+                iconRes = R.drawable.qr_code,
+                title = stringResource(R.string.together_show_my_qr),
+                subtitle = stringResource(R.string.together_show_my_qr_desc),
+                enabled = true,
+                onClick = {
+                    showGuestQr = true
+                    service?.startTogetherInviteListener(displayName)
+                },
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 12.dp),
+            )
+        }
+
+        // Contacts paired by QR, with their live sessions on this network
+        if (contacts.isNotEmpty()) {
+            TogetherContactsCard(
+                contacts = contacts,
+                liveSessions = liveContactSessions,
+                joinEnabled = isIdle,
+                onJoin = { session -> service?.joinTogetherContactSession(session, displayName) },
+                onRemove = { contact -> service?.removeTogetherContact(contact.clientId) },
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 16.dp),
+            )
+        }
     }
 
     TopAppBar(

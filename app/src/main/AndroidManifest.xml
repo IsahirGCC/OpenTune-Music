@@ -195,6 +195,12 @@
             android:name=".ui.screens.settings.PoTokenExtractionActivity"
             android:exported="false"
             android:theme="@style/Theme.OpenTune" />
+
+        <!-- Music Together: QR scanner (ZXing). Portrait-friendly instead of the library's landscape lock. -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="fullSensor"
+            tools:replace="screenOrientation" />
     </application>
 
 </manifest>

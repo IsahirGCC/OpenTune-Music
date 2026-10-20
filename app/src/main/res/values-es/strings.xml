@@ -698,4 +698,27 @@
     <string name="together_welcome_host_body">Pulsa \"comenzar sesión\", después comparte el enlace de sesión. Mantén OpenTune abierto en segundo plano mientras alojas.</string>
     <string name="stream_bypass_proxy">Proxy de derivación para transmisiones</string>
     <string name="stream_bypass_proxy_desc">Utiliza tu dirección IP directa para la reproducción de transmisiones y evita las incompatibilidades de IP</string>
+
+    <!-- Music Together: QR invites & contacts -->
+    <string name="together_show_my_qr">Mostrar mi QR</string>
+    <string name="together_show_my_qr_desc">Deja que el anfitrión lo escanee para invitarte</string>
+    <string name="together_my_qr_title">Tu QR de invitación</string>
+    <string name="together_my_qr_hint">Pide al anfitrión que escanee este código desde su sesión. Ambos dispositivos deben estar en la misma red Wi‑Fi. El código expira en 5 minutos.</string>
+    <string name="together_scan_guest_qr">Agregar invitado con QR</string>
+    <string name="together_scan_prompt">Escanea el QR de OpenTune del invitado</string>
+    <string name="together_invite_title">Invitación</string>
+    <string name="together_invite_message">%1$s te invita a escuchar juntos</string>
+    <string name="together_invite_decline">Rechazar</string>
+    <string name="together_invite_sent">Invitación enviada a %1$s</string>
+    <string name="together_qr_invalid">Este no es un QR de invitación de OpenTune</string>
+    <string name="together_qr_host_first">Inicia una sesión primero</string>
+    <string name="together_qr_expired">El QR expiró. Pide que lo muestre de nuevo</string>
+    <string name="together_qr_unreachable">No se pudo contactar al invitado. ¿Están en la misma red Wi‑Fi?</string>
+    <string name="together_qr_no_network">Conéctate a una red Wi‑Fi para mostrar tu QR</string>
+    <string name="together_contacts">Contactos</string>
+    <string name="together_contacts_desc">Aquí aparecen las sesiones de tus contactos en esta red</string>
+    <string name="together_contact_live">Escuchando ahora</string>
+    <string name="together_contact_offline">Sin sesión activa</string>
+    <string name="together_contact_remove">Eliminar contacto</string>
+    <string name="together_contact_remove_confirm">¿Eliminar a %1$s de tus contactos?</string>
 </resources>

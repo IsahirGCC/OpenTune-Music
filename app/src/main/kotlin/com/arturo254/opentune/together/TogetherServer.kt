@@ -79,6 +79,14 @@ class TogetherServer(
 
     var onEvent: ((TogetherServerEvent) -> Unit)? = null
 
+    /**
+     * Paired contacts as clientId -> pairKey. A contact may join with its pair key instead
+     * of the session key (used for QR invites and NSD discovery) and is admitted without
+     * host approval, since the host already vouched for them when pairing.
+     */
+    @Volatile
+    var trustedContacts: Map<String, String> = emptyMap()
+
     fun currentParticipants(): List<TogetherParticipant> = lastParticipants
 
     suspend fun currentSettings(): TogetherRoomSettings = mutex.withLock { settings }
@@ -253,7 +261,8 @@ class TogetherServer(
             return
         }
 
-        if (hello.sessionId != sessionId || hello.sessionKey != sessionKey) {
+        val viaPairKey = trustedContacts[hello.clientId]?.let { it == hello.sessionKey } == true
+        if (hello.sessionId != sessionId || (hello.sessionKey != sessionKey && !viaPairKey)) {
             send(
                 TogetherJson.json.encodeToString(
                     TogetherMessage.serializer(),
@@ -265,7 +274,7 @@ class TogetherServer(
         }
 
         val participantId = UUID.randomUUID().toString()
-        val isPending = mutex.withLock { settings.requireHostApprovalToJoin }
+        val isPending = !viaPairKey && mutex.withLock { settings.requireHostApprovalToJoin }
 
         val client =
             Client(

@@ -815,4 +815,26 @@ OpenTune will only extract your token, and everything else is stored locally.</s
     <string name="player_design_v7">Immersive</string>
     <string name="liquid_glass_navbar">Liquid Glass Navbar</string>
 
+    <!-- Music Together: QR invites & contacts -->
+    <string name="together_show_my_qr">Show my QR</string>
+    <string name="together_show_my_qr_desc">Let the host scan it to invite you</string>
+    <string name="together_my_qr_title">Your invite QR</string>
+    <string name="together_my_qr_hint">Ask the host to scan this code from their session. Both devices must be on the same Wi‑Fi network. The code expires in 5 minutes.</string>
+    <string name="together_scan_guest_qr">Add guest with QR</string>
+    <string name="together_scan_prompt">Scan the guest\'s OpenTune QR</string>
+    <string name="together_invite_title">Invitation</string>
+    <string name="together_invite_message">%1$s invites you to listen together</string>
+    <string name="together_invite_decline">Decline</string>
+    <string name="together_invite_sent">Invitation sent to %1$s</string>
+    <string name="together_qr_invalid">This isn\'t an OpenTune invite QR</string>
+    <string name="together_qr_host_first">Start a session first</string>
+    <string name="together_qr_expired">The QR expired. Ask them to show it again</string>
+    <string name="together_qr_unreachable">Couldn\'t reach the guest. Are you on the same Wi‑Fi?</string>
+    <string name="together_qr_no_network">Connect to Wi‑Fi to show your QR</string>
+    <string name="together_contacts">Contacts</string>
+    <string name="together_contacts_desc">Sessions from your contacts on this network appear here</string>
+    <string name="together_contact_live">Listening now</string>
+    <string name="together_contact_offline">Not in a session</string>
+    <string name="together_contact_remove">Remove contact</string>
+    <string name="together_contact_remove_confirm">Remove %1$s from your contacts?</string>
 </resources>

@@ -443,6 +443,18 @@ class MusicService :
         com.arturo254.opentune.together.TogetherSessionState.Idle,
     )
     private var togetherServer: com.arturo254.opentune.together.TogetherServer? = null
+    private val togetherNsd by lazy { com.arturo254.opentune.together.TogetherNsd(this) }
+    val togetherContactsStore by lazy { com.arturo254.opentune.together.TogetherContactsStore(dataStore) }
+    private var togetherContactsJob: Job? = null
+    private var togetherHostJoinInfo: com.arturo254.opentune.together.TogetherJoinInfo? = null
+    private var togetherHostDisplayName: String = ""
+    private var togetherInviteListener: com.arturo254.opentune.together.TogetherInviteListener? = null
+
+    /** QR card shown by a guest while waiting to be invited (null when not listening). */
+    val togetherGuestCard = MutableStateFlow<com.arturo254.opentune.together.TogetherGuestCard?>(null)
+
+    /** Invite received from a host that scanned this device's QR, awaiting the user's answer. */
+    val togetherIncomingInvite = MutableStateFlow<com.arturo254.opentune.together.TogetherInvite?>(null)
     private var togetherOnlineHost: com.arturo254.opentune.together.TogetherOnlineHost? = null
     private var togetherClient: com.arturo254.opentune.together.TogetherClient? = null
     private var togetherBroadcastJob: Job? = null
@@ -2236,6 +2248,25 @@ class MusicService :
 
             server.start(port)
             togetherServer = server
+            togetherHostJoinInfo = joinInfo
+            togetherHostDisplayName = displayName.trim().ifBlank { getString(R.string.app_name) }
+
+            togetherContactsJob =
+                ioScope.launch(SilentHandler) {
+                    togetherContactsStore.contacts.collect { contacts ->
+                        if (togetherServer === server) {
+                            server.trustedContacts = contacts.associate { it.clientId to it.pairKey }
+                        }
+                    }
+                }
+            runCatching {
+                togetherNsd.register(
+                    port = port,
+                    hostName = togetherHostDisplayName,
+                    hostClientId = getOrCreateTogetherClientId(),
+                    sessionId = sessionId,
+                )
+            }
 
             scope.launch(SilentHandler) {
                 togetherSessionState.value =
@@ -2956,6 +2987,168 @@ class MusicService :
         client.requestAddTrack(state.sessionId, track, mode)
     }
 
+    // ── QR invites & contacts ────────────────────────────────────────────────
+
+    /** Guest: opens the invite listener and publishes the QR card in [togetherGuestCard]. */
+    fun startTogetherInviteListener(displayName: String) {
+        ensureScopesActive()
+        ioScope.launch(SilentHandler) {
+            togetherInviteListener?.stop()
+            val ip = getLocalIpv4Address()
+            if (ip == null) {
+                togetherGuestCard.value = null
+                showTogetherNotice(getString(R.string.together_qr_no_network), key = "TOGETHER_QR_NO_NETWORK")
+                return@launch
+            }
+            val listener =
+                com.arturo254.opentune.together.TogetherInviteListener(
+                    clientId = getOrCreateTogetherClientId(),
+                    displayName = displayName.trim().ifBlank { getString(R.string.together_role_guest) },
+                )
+            listener.onInvite = { invite -> togetherIncomingInvite.value = invite }
+            togetherInviteListener = listener
+            val card = listener.start(hostAddress = ip)
+            togetherGuestCard.value = card
+            if (card == null) {
+                togetherInviteListener = null
+                showTogetherNotice(getString(R.string.network_unavailable), key = "TOGETHER_QR_BIND_FAILED")
+            }
+        }
+    }
+
+    fun stopTogetherInviteListener() {
+        val listener = togetherInviteListener
+        togetherInviteListener = null
+        togetherGuestCard.value = null
+        if (listener != null) ioScope.launch(SilentHandler) { listener.stop() }
+    }
+
+    /** Guest: accepts the pending invite, remembers the host as a contact and joins. */
+    fun acceptTogetherInvite(displayName: String) {
+        val invite = togetherIncomingInvite.value ?: return
+        togetherIncomingInvite.value = null
+        stopTogetherInviteListener()
+        ensureScopesActive()
+        ioScope.launch(SilentHandler) {
+            togetherContactsStore.upsert(
+                com.arturo254.opentune.together.TogetherContact(
+                    clientId = invite.hostClientId,
+                    name = invite.hostName,
+                    pairKey = invite.pairKey,
+                    addedAtMs = System.currentTimeMillis(),
+                ),
+            )
+            joinTogether(invite.joinLink, displayName)
+        }
+    }
+
+    fun declineTogetherInvite() {
+        togetherIncomingInvite.value = null
+    }
+
+    /**
+     * Host: invites the guest whose QR was scanned. The guest receives a link that uses a
+     * pair key instead of the session key, so they are admitted without manual approval
+     * and can rejoin later from the contacts list.
+     */
+    fun inviteTogetherGuest(rawQr: String) {
+        val card = com.arturo254.opentune.together.TogetherGuestCardLink.decode(rawQr)
+        if (card == null) {
+            showTogetherNotice(getString(R.string.together_qr_invalid), key = "TOGETHER_QR_INVALID")
+            return
+        }
+        val server = togetherServer
+        val joinInfo = togetherHostJoinInfo
+        if (server == null || joinInfo == null) {
+            showTogetherNotice(getString(R.string.together_qr_host_first), key = "TOGETHER_QR_HOST_FIRST")
+            return
+        }
+        ensureScopesActive()
+        ioScope.launch(SilentHandler) {
+            val existing = togetherContactsStore.current().firstOrNull { it.clientId == card.clientId }
+            val pairKey = existing?.pairKey ?: java.util.UUID.randomUUID().toString()
+            // Trust right away: the guest may connect before the contacts flow re-emits.
+            server.trustedContacts = server.trustedContacts + (card.clientId to pairKey)
+
+            val invite =
+                com.arturo254.opentune.together.TogetherInvite(
+                    token = card.token,
+                    hostClientId = getOrCreateTogetherClientId(),
+                    hostName = togetherHostDisplayName,
+                    joinLink = com.arturo254.opentune.together.TogetherLink.encode(joinInfo.copy(sessionKey = pairKey)),
+                    pairKey = pairKey,
+                )
+            when (val result = com.arturo254.opentune.together.TogetherInviteSender.send(card, invite)) {
+                is com.arturo254.opentune.together.TogetherInviteResult.Accepted -> {
+                    togetherContactsStore.upsert(
+                        com.arturo254.opentune.together.TogetherContact(
+                            clientId = result.guestClientId,
+                            name = result.guestName,
+                            pairKey = pairKey,
+                            addedAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                    showTogetherNotice(
+                        getString(R.string.together_invite_sent, result.guestName),
+                        key = "TOGETHER_INVITE_SENT_${card.clientId}",
+                    )
+                }
+
+                com.arturo254.opentune.together.TogetherInviteResult.Rejected -> {
+                    if (existing == null) server.trustedContacts = server.trustedContacts - card.clientId
+                    showTogetherNotice(getString(R.string.together_qr_expired), key = "TOGETHER_QR_EXPIRED")
+                }
+
+                is com.arturo254.opentune.together.TogetherInviteResult.Unreachable -> {
+                    if (existing == null) server.trustedContacts = server.trustedContacts - card.clientId
+                    Timber.tag("Together").w(result.throwable, "invite unreachable")
+                    showTogetherNotice(getString(R.string.together_qr_unreachable), key = "TOGETHER_QR_UNREACHABLE")
+                }
+            }
+        }
+    }
+
+    /** Sessions announced on the local network by devices saved as contacts. */
+    fun discoverTogetherContactSessions(): kotlinx.coroutines.flow.Flow<List<com.arturo254.opentune.together.TogetherDiscoveredSession>> =
+        kotlinx.coroutines.flow.combine(
+            togetherNsd.discover(),
+            togetherContactsStore.contacts,
+        ) { sessions, contacts ->
+            val ids = contacts.mapTo(HashSet()) { it.clientId }
+            sessions.filter { it.hostClientId in ids && it.sessionId != togetherHostJoinInfo?.sessionId }
+        }
+
+    /** Guest: joins a session discovered over NSD using the pair key shared with that contact. */
+    fun joinTogetherContactSession(
+        session: com.arturo254.opentune.together.TogetherDiscoveredSession,
+        displayName: String,
+    ) {
+        ensureScopesActive()
+        ioScope.launch(SilentHandler) {
+            val contact = togetherContactsStore.current().firstOrNull { it.clientId == session.hostClientId }
+            if (contact == null) {
+                showTogetherNotice(getString(R.string.not_allowed), key = "TOGETHER_CONTACT_MISSING")
+                return@launch
+            }
+            val link =
+                com.arturo254.opentune.together.TogetherLink.encode(
+                    com.arturo254.opentune.together.TogetherJoinInfo(
+                        host = session.host,
+                        port = session.port,
+                        sessionId = session.sessionId,
+                        sessionKey = contact.pairKey,
+                    ),
+                )
+            joinTogether(link, displayName)
+        }
+    }
+
+    fun removeTogetherContact(clientId: String) {
+        ioScope.launch(SilentHandler) {
+            togetherContactsStore.remove(clientId)
+        }
+    }
+
     private suspend fun handleTogetherHostEvent(
         event: com.arturo254.opentune.together.TogetherServerEvent,
         currentSettings: suspend () -> com.arturo254.opentune.together.TogetherRoomSettings,
@@ -3248,6 +3441,11 @@ class MusicService :
     private suspend fun stopTogetherInternal() {
         togetherBroadcastJob?.cancel()
         togetherBroadcastJob = null
+
+        togetherContactsJob?.cancel()
+        togetherContactsJob = null
+        togetherHostJoinInfo = null
+        runCatching { togetherNsd.unregister() }
 
         togetherOnlineConnectJob?.cancel()
         togetherOnlineConnectJob = null
@@ -4819,6 +5017,9 @@ class MusicService :
         unregisterBluetoothReceiver()
         try {
             scope.launch { stopTogetherInternal() }
+        } catch (_: Exception) {}
+        try {
+            stopTogetherInviteListener()
         } catch (_: Exception) {}
         try {
             DiscordPresenceManager.stop()

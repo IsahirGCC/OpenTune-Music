@@ -241,6 +241,9 @@ dependencies {
     coreLibraryDesugaring(libs.desugaring)
 
     implementation(libs.timber)
+    // Music Together: QR invites (generation + scanning, no Play Services)
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.android.embedded)
     testImplementation(libs.junit)
     // Ensure ProcessLifecycleOwner is available for the presence manager and CI unit tests
     implementation("com.github.therealbush:translator:1.1.1")
